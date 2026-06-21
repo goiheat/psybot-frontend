@@ -1,4 +1,5 @@
 import type { ChatMessage } from "@/entities/message";
+import type { PsyboyThread } from "@/shared/api/psyboy";
 
 export type ChatStatus = "open" | "completed" | "archived";
 
@@ -23,6 +24,26 @@ export interface ChatSummary {
 
 export interface ChatThread extends ChatSummary {
   messages: ChatMessage[];
+}
+
+export function mapPsyboyThread(thread: PsyboyThread): ChatSummary {
+  const startedAt = new Date(thread.created_at);
+  const status: ChatStatus =
+    thread.status === "active"
+      ? "open"
+      : thread.status === "closed"
+        ? "completed"
+        : "archived";
+
+  return {
+    id: thread.id,
+    title: `Сессия ${thread.id.slice(0, 8)}`,
+    preview: "Открыть историю разговора",
+    startedAt,
+    durationLabel: "",
+    status,
+    topics: [],
+  };
 }
 
 export const chatTopics = {

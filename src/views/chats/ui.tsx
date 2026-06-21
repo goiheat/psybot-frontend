@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Plus, Search } from "lucide-react";
 
 import {
@@ -13,9 +14,10 @@ import {
 } from "@/shared/ui";
 import { SessionRule } from "@/shared/ui";
 import { ChatRow } from "@/widgets/chat-row";
-import { chatSummaries } from "@/shared/mock/chats";
 import { recentScreenings, severityLabel } from "@/entities/screening";
+import { mapPsyboyThread, type ChatSummary } from "@/entities/chat";
 import { currentUser } from "@/entities/user";
+import { createThread, listThreads } from "@/shared/api/psyboy";
 
 const filters = [
   { id: "all", label: "Все" },
@@ -54,7 +56,57 @@ function StatCell({
 }
 
 export function ChatsView() {
+  const router = useRouter();
   const [filter, setFilter] = React.useState<FilterId>("all");
+  const [chatSummaries, setChatSummaries] = React.useState<ChatSummary[]>([]);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isCreating, setIsCreating] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    listThreads()
+      .then((threadPage) => {
+        if (!cancelled) {
+          setChatSummaries(threadPage.items.map(mapPsyboyThread));
+        }
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) {
+          setError(
+            requestError instanceof Error
+              ? requestError.message
+              : "Не удалось загрузить сессии.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleCreateThread() {
+    if (isCreating) return;
+    setIsCreating(true);
+    setError(null);
+
+    try {
+      const thread = await createThread();
+      router.push(`/chats/${thread.id}`);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось создать сессию.",
+      );
+      setIsCreating(false);
+    }
+  }
 
   const visible = React.useMemo(() => {
     if (filter === "all") return chatSummaries;
@@ -65,18 +117,18 @@ export function ChatsView() {
     return chatSummaries.filter((c) =>
       c.topics.some((t) => /GAD|PHQ|опросник/i.test(t.label)),
     );
-  }, [filter]);
+  }, [chatSummaries, filter]);
 
+  const now = new Date();
+  const weekAgo = new Date(now);
+  weekAgo.setDate(now.getDate() - 7);
   const today = visible.filter(
-    (c) =>
-      c.startedAt.toDateString() === new Date(2026, 4, 14).toDateString() ||
-      c.status === "open",
+    (c) => c.startedAt.toDateString() === now.toDateString(),
   );
   const thisWeek = visible.filter(
     (c) =>
-      c.startedAt.getDate() >= 8 &&
-      c.startedAt.getDate() < 14 &&
-      c.status !== "open",
+      c.startedAt >= weekAgo &&
+      c.startedAt.toDateString() !== now.toDateString(),
   );
   const earlier = visible.filter(
     (c) =>
@@ -96,14 +148,19 @@ export function ChatsView() {
               Сессии
             </div>
             <div className="font-mono text-[10px] tracking-[0.06em] text-ink-3">
-              всего {chatSummaries.length} · последняя сегодня
+              всего {chatSummaries.length}
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <Button variant="ghost" size="sm">
               <Search /> Поиск
             </Button>
-            <Button variant="ink" size="sm">
+            <Button
+              variant="ink"
+              size="sm"
+              disabled={isCreating}
+              onClick={handleCreateThread}
+            >
               <Plus /> Новая сессия
             </Button>
           </div>
@@ -124,7 +181,11 @@ export function ChatsView() {
           {/* stats */}
           <Surface className="overflow-hidden mb-10 p-0">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-rule">
-              <StatCell label="за 30 дней" value="7" caption="сессий" />
+              <StatCell
+                label="загружено"
+                value={chatSummaries.length}
+                caption="сессий"
+              />
               <StatCell label="время" value="2ч 18м" caption="в разговоре" />
               {gad && (
                 <StatCell
@@ -181,6 +242,21 @@ export function ChatsView() {
 
           {/* groups */}
           <div className="space-y-10">
+            {isLoading && (
+              <div className="text-center py-16 text-[14px] text-ink-3">
+                Загружаем сессии…
+              </div>
+            )}
+
+            {error && (
+              <div
+                role="alert"
+                className="rounded-md border border-clay/40 bg-clay-soft/30 px-4 py-3 text-[13px] text-ink-2"
+              >
+                {error}
+              </div>
+            )}
+
             {today.length > 0 && (
               <section>
                 <SessionRule className="mb-5">сегодня</SessionRule>
@@ -211,7 +287,7 @@ export function ChatsView() {
                 </div>
               </section>
             )}
-            {visible.length === 0 && (
+            {!isLoading && !error && visible.length === 0 && (
               <div className="text-center py-16 text-[14px] text-ink-3">
                 В этой выборке сессий пока нет.
               </div>
@@ -220,8 +296,7 @@ export function ChatsView() {
 
           <div className="mt-10 pt-6 border-t border-rule-soft flex items-center justify-between text-[12.5px] text-ink-3">
             <span>
-              Показано {visible.length} из {chatSummaries.length} за последние
-              30 дней
+              Показано {visible.length} из {chatSummaries.length} сессий
             </span>
             <button className="hover:text-ink transition">смотреть всё</button>
           </div>

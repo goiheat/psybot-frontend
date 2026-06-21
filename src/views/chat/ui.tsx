@@ -15,18 +15,17 @@ import {
   ThinkingDots,
 } from "@/shared/ui";
 import { ChatComposer } from "@/widgets/chat-composer";
-import { RecapCard } from "@/widgets/recap-card";
 import { useChatThread } from "@/features/send-message";
-import type { ChatThread } from "@/entities/chat";
-import { cn } from "@/shared/lib/utils";
 
 interface ChatViewProps {
-  thread: ChatThread;
+  threadId: string;
 }
 
-export function ChatView({ thread }: ChatViewProps) {
-  const { messages, send, isThinking } = useChatThread(thread.messages);
+export function ChatView({ threadId }: ChatViewProps) {
+  const { messages, send, isLoading, isThinking, error } =
+    useChatThread(threadId);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const hasStreamingMessage = messages.some((message) => message.streaming);
 
   React.useEffect(() => {
     const el = scrollRef.current;
@@ -50,15 +49,11 @@ export function ChatView({ thread }: ChatViewProps) {
           <Logo size="sm" showName={false} />
           <div className="leading-tight">
             <div className="font-serif-display text-[16px] text-ink truncate max-w-[280px]">
-              {thread.title}
+              Сессия {threadId.slice(0, 8)}
             </div>
             <div className="font-mono text-[10px] tracking-[0.06em] text-ink-3 flex items-center gap-2">
-              <LiveDot className={cn(thread.status !== "open" && "hidden")} />
-              <span>
-                {thread.status === "open"
-                  ? `активна · ${thread.durationLabel}`
-                  : thread.durationLabel}
-              </span>
+              <LiveDot />
+              <span>активна</span>
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -77,11 +72,21 @@ export function ChatView({ thread }: ChatViewProps) {
           ref={scrollRef}
           className="max-w-[720px] mx-auto flex flex-col gap-8 overflow-y-auto"
         >
-          {thread.recap && <RecapCard text={thread.recap} />}
-
-          <SessionRule>сегодня · 21:42</SessionRule>
+          <SessionRule>история сессии</SessionRule>
 
           <div className="space-y-6">
+            {isLoading && (
+              <div className="py-12 text-center text-[14px] text-ink-3">
+                Загружаем историю…
+              </div>
+            )}
+
+            {!isLoading && messages.length === 0 && !error && (
+              <div className="py-12 text-center text-[14px] text-ink-3">
+                Сессия пока пустая. Напиши первое сообщение.
+              </div>
+            )}
+
             {messages.map((m) => (
               <ChatBubble key={m.id} role={m.role} streaming={m.streaming}>
                 {m.role === "agent" && (
@@ -119,10 +124,19 @@ export function ChatView({ thread }: ChatViewProps) {
               </ChatBubble>
             ))}
 
-            {isThinking && (
+            {isThinking && !hasStreamingMessage && (
               <ChatBubble role="agent">
                 <ThinkingDots />
               </ChatBubble>
+            )}
+
+            {error && (
+              <div
+                role="alert"
+                className="rounded-md border border-clay/40 bg-clay-soft/30 px-4 py-3 text-[13px] text-ink-2"
+              >
+                {error}
+              </div>
             )}
 
             <div className="flex items-center gap-2 text-[12.5px] text-ink-3 pt-2">
@@ -137,7 +151,7 @@ export function ChatView({ thread }: ChatViewProps) {
 
       <div className="px-6 lg:px-12">
         <div className="max-w-[720px] mx-auto">
-          <ChatComposer onSend={send} />
+          <ChatComposer onSend={send} disabled={isLoading || isThinking} />
         </div>
       </div>
     </div>

@@ -2,13 +2,14 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { MessageCircle, Plus, UserRound, LogOut } from "lucide-react";
 
 import { Logo, Eyebrow, LiveDot } from "@/shared/ui";
 import { ThemeToggle } from "@/features/theme-toggle";
 import { cn } from "@/shared/lib/utils";
-import { chatSummaries } from "@/shared/mock/chats";
+import { mapPsyboyThread, type ChatSummary } from "@/entities/chat";
+import { createThread, listThreads } from "@/shared/api/psyboy";
 import { formatTime } from "@/shared/lib/format";
 
 const primaryNav = [
@@ -73,6 +74,41 @@ function NavItem({
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [chatSummaries, setChatSummaries] = React.useState<ChatSummary[]>([]);
+  const [isCreating, setIsCreating] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    listThreads()
+      .then((threadPage) => {
+        if (!cancelled) {
+          setChatSummaries(threadPage.items.map(mapPsyboyThread));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setChatSummaries([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
+
+  async function handleCreateThread() {
+    if (isCreating) return;
+    setIsCreating(true);
+
+    try {
+      const thread = await createThread();
+      router.push(`/chats/${thread.id}`);
+    } catch {
+      router.push("/chats");
+    } finally {
+      setIsCreating(false);
+    }
+  }
 
   return (
     <aside className="w-[280px] flex-none border-r border-rule px-5 py-7 hidden md:flex flex-col bg-bg-soft">
@@ -80,18 +116,21 @@ export function AppSidebar() {
         <Logo size="md" sublabel="v0.4 · preview" />
       </Link>
 
-      <Link
-        href="/chats?new=1"
+      <button
+        type="button"
+        disabled={isCreating}
+        onClick={handleCreateThread}
         className={cn(
           "flex items-center gap-2 rounded-md border border-rule",
           "px-3.5 h-10 text-[14px] text-ink bg-card",
           "hover:border-ink-3 hover:bg-card-2 transition-colors duration-[240ms]",
           "mb-7",
+          "disabled:opacity-60",
         )}
       >
         <Plus className="size-4 text-sage-deep" />
         <span>Новая сессия</span>
-      </Link>
+      </button>
 
       <Eyebrow className="px-2 mb-3">Навигация</Eyebrow>
       <nav className="flex flex-col gap-1 mb-7">
@@ -111,12 +150,12 @@ export function AppSidebar() {
 
       <Eyebrow className="px-2 mb-3">Последние</Eyebrow>
       <nav className="flex flex-col gap-1 mb-6">
-        {chatSummaries.slice(0, 4).map((c) => (
+        {chatSummaries.slice(0, 4).map((c, index) => (
           <NavItem
             key={c.id}
             href={`/chats/${c.id}`}
             label={c.title}
-            num={c.id.replace(/[^0-9]/g, "").padStart(2, "0").slice(-2)}
+            num={String(index + 1).padStart(2, "0")}
             status={c.status === "open" ? "open" : undefined}
             meta={formatTime(c.startedAt)}
             active={pathname === `/chats/${c.id}`}

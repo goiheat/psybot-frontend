@@ -8,9 +8,11 @@ import { Button } from "@/shared/ui";
 
 export function ThemeToggle({ className }: { className?: string }) {
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => setMounted(true), []);
+  const mounted = React.useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
 
   const isDark = resolvedTheme === "dark";
   const label = isDark ? "Светлая тема" : "Тёмная тема";
