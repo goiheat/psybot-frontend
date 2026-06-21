@@ -20,32 +20,8 @@ function mapMessage(message: PsyboyMessage): ChatMessage {
   };
 }
 
-function waitForEventSource(eventSource: EventSource): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timeoutId = window.setTimeout(() => {
-      cleanup();
-      reject(new Error("Psyboy не открыл поток ответа вовремя."));
-    }, 10_000);
-
-    function cleanup() {
-      window.clearTimeout(timeoutId);
-      eventSource.removeEventListener("open", handleOpen);
-      eventSource.removeEventListener("error", handleError);
-    }
-
-    function handleOpen() {
-      cleanup();
-      resolve();
-    }
-
-    function handleError() {
-      cleanup();
-      reject(new Error("Не удалось подключиться к потоку ответа."));
-    }
-
-    eventSource.addEventListener("open", handleOpen, { once: true });
-    eventSource.addEventListener("error", handleError, { once: true });
-  });
+function isSseNamedEvent(event: Event): event is MessageEvent<string> {
+  return event instanceof MessageEvent;
 }
 
 export function useChatThread(threadId: string) {
@@ -107,12 +83,15 @@ export function useChatThread(threadId: string) {
       activeEventSource.current = eventSource;
       let responseMessageId = "";
       let responseTimeoutId: number | undefined;
+      let pollTimeoutId: number | undefined;
       let streamFinished = false;
+      let receivedStreamEvent = false;
 
       function updateAssistantMessage(
         event: MessageEvent<string>,
         complete: boolean,
       ) {
+        receivedStreamEvent = true;
         responseMessageId =
           event.lastEventId || responseMessageId || `response-${crypto.randomUUID()}`;
 
@@ -147,9 +126,13 @@ export function useChatThread(threadId: string) {
       }
 
       function finishStream() {
+        if (streamFinished) return;
         streamFinished = true;
         if (responseTimeoutId !== undefined) {
           window.clearTimeout(responseTimeoutId);
+        }
+        if (pollTimeoutId !== undefined) {
+          window.clearTimeout(pollTimeoutId);
         }
         eventSource.close();
         if (activeEventSource.current === eventSource) {
@@ -158,25 +141,49 @@ export function useChatThread(threadId: string) {
         setIsThinking(false);
       }
 
+      async function syncHistoryFromServer() {
+        try {
+          const history = await getThreadHistory(threadId);
+          setMessages(history.messages.map(mapMessage));
+          setError(null);
+        } catch (requestError) {
+          setError(
+            requestError instanceof Error
+              ? requestError.message
+              : "Не удалось получить ответ.",
+          );
+        } finally {
+          finishStream();
+        }
+      }
+
+      eventSource.addEventListener("token", (rawEvent) => {
+        updateAssistantMessage(rawEvent as MessageEvent<string>, false);
+      });
+      eventSource.addEventListener("done", (rawEvent) => {
+        updateAssistantMessage(rawEvent as MessageEvent<string>, true);
+        finishStream();
+      });
+      eventSource.addEventListener("system_message", (rawEvent) => {
+        updateAssistantMessage(rawEvent as MessageEvent<string>, true);
+        finishStream();
+      });
+      eventSource.addEventListener("error", (rawEvent) => {
+        if (!isSseNamedEvent(rawEvent)) {
+          if (!streamFinished && !receivedStreamEvent) {
+            void syncHistoryFromServer();
+          } else if (!streamFinished) {
+            setError("Ответ прерван. Попробуй отправить сообщение ещё раз.");
+            finishStream();
+          }
+          return;
+        }
+
+        updateAssistantMessage(rawEvent, true);
+        finishStream();
+      });
+
       try {
-        await waitForEventSource(eventSource);
-
-        eventSource.addEventListener("token", (rawEvent) => {
-          updateAssistantMessage(rawEvent as MessageEvent<string>, false);
-        });
-        eventSource.addEventListener("done", (rawEvent) => {
-          updateAssistantMessage(rawEvent as MessageEvent<string>, true);
-          finishStream();
-        });
-        eventSource.addEventListener("system_message", (rawEvent) => {
-          updateAssistantMessage(rawEvent as MessageEvent<string>, true);
-          finishStream();
-        });
-        eventSource.addEventListener("error", () => {
-          setError("Ответ прерван. Попробуй отправить сообщение ещё раз.");
-          finishStream();
-        });
-
         const sentMessage = await sendThreadMessage(threadId, text);
         setMessages((currentMessages) =>
           currentMessages.map((message) =>
@@ -185,12 +192,23 @@ export function useChatThread(threadId: string) {
               : message,
           ),
         );
-        if (!streamFinished) {
-          responseTimeoutId = window.setTimeout(() => {
+
+        pollTimeoutId = window.setTimeout(() => {
+          if (!streamFinished && !receivedStreamEvent) {
+            void syncHistoryFromServer();
+          }
+        }, 3_000);
+
+        responseTimeoutId = window.setTimeout(() => {
+          if (!streamFinished) {
+            if (!receivedStreamEvent) {
+              void syncHistoryFromServer();
+              return;
+            }
             setError("Psyboy не ответил вовремя. Сообщение сохранено в истории.");
             finishStream();
-          }, 120_000);
-        }
+          }
+        }, 120_000);
       } catch (requestError) {
         eventSource.close();
         if (activeEventSource.current === eventSource) {

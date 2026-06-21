@@ -4,6 +4,9 @@ import {
   requestPsyboy,
 } from "@/shared/api/psyboy-server";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 interface RouteContext {
   params: Promise<{ id: string }>;
 }

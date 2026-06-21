@@ -33,6 +33,15 @@ export function forwardPsyboyResponse(upstreamResponse: Response): Response {
     if (headerValue) headers.set(headerName, headerValue);
   }
 
+  if (
+    upstreamResponse.headers
+      .get("content-type")
+      ?.includes("text/event-stream")
+  ) {
+    headers.set("X-Accel-Buffering", "no");
+    headers.set("Cache-Control", "no-cache, no-transform");
+  }
+
   return new Response(upstreamResponse.body, {
     status: upstreamResponse.status,
     headers,
