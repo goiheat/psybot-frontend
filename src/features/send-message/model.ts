@@ -11,21 +11,29 @@ import {
 } from "@/shared/api/psyboy";
 import { createClientId } from "@/shared/lib/utils";
 
-function mapMessage(message: PsyboyMessage): ChatMessage {
-  const isFailedAssistant =
+function mapMessage(message: PsyboyMessage): ChatMessage | null {
+  if (
     message.role === "assistant" &&
     message.status === "ERROR" &&
-    !message.content.trim();
+    !message.content.trim()
+  ) {
+    return null;
+  }
 
   return {
     id: message.message_id,
     role: message.role === "user" ? "user" : "agent",
-    text: isFailedAssistant
-      ? "Не удалось получить ответ. Попробуй отправить сообщение ещё раз."
-      : message.content,
+    text: message.content,
     at: new Date(message.created_at),
     streaming: message.status === "STREAM",
   };
+}
+
+function mapHistoryMessages(messages: PsyboyMessage[]): ChatMessage[] {
+  return messages.flatMap((message) => {
+    const mappedMessage = mapMessage(message);
+    return mappedMessage ? [mappedMessage] : [];
+  });
 }
 
 function isSseNamedEvent(event: Event): event is MessageEvent<string> {
@@ -45,7 +53,7 @@ export function useChatThread(threadId: string) {
     getThreadHistory(threadId)
       .then((history) => {
         if (!cancelled) {
-          setMessages(history.messages.map(mapMessage));
+          setMessages(mapHistoryMessages(history.messages));
           setError(null);
         }
       })
@@ -113,7 +121,7 @@ export function useChatThread(threadId: string) {
       async function syncHistoryFromServer() {
         try {
           const history = await getThreadHistory(threadId);
-          setMessages(history.messages.map(mapMessage));
+          setMessages(mapHistoryMessages(history.messages));
           setError(null);
         } catch (requestError) {
           setError(
@@ -219,7 +227,7 @@ export function useChatThread(threadId: string) {
           if (!streamFinished && !receivedStreamEvent) {
             void syncHistoryFromServer();
           }
-        }, 3_000);
+        }, 10_000);
 
         responseTimeoutId = window.setTimeout(() => {
           if (!streamFinished) {
